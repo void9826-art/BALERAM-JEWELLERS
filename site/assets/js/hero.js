@@ -145,6 +145,7 @@
   var narrow = false;   // set by applyHeroMode; phones get the wider ranges
 
   function updateBands(p) {
+    if (!canDrive) p = 0;     // no film yet: the poster is frame one, so is the copy
     for (var i = 0; i < bands.length; i++) {
       var B = bands[i];
       var a = narrow ? B.am : B.a, b = narrow ? B.bm : B.b;
@@ -254,11 +255,13 @@
   }
 
   /* ============ the poster first, then the streamed blob ============ */
-  var heroStarted = false, fetchStarted = false;
+  var heroStarted = false, fetchStarted = false, videoReady = false, canDrive = false;
 
   function failVideo() {
     stage.classList.remove('loading');
     stage.classList.add('video-failed');
+    canDrive = true;          // the captions still work over the still frame
+    updateBands(heroProgress());
   }
 
   function initHeroOnce() {
@@ -267,56 +270,95 @@
 
     poster.style.backgroundImage = "url('" + current.poster + "')";
     loadStart = performance.now();
-
-    var img = new Image();
-    img.onload = startBlobFetch;
-    img.onerror = startBlobFetch;
-    img.src = current.poster;
-    setTimeout(startBlobFetch, 4000);
+    loadVideo();
   }
 
-  function startBlobFetch() {
+  /* Stream the file and seek into it with range requests, rather than waiting
+     for the whole thing. The wide cut is nearly 8 MB: downloading all of it
+     before the first scroll meant ten seconds of a dead page on a real
+     connection. Hosts without range support fall back to the blob below. */
+  function loadVideo() {
     if (fetchStarted) return;
     fetchStarted = true;
-    loadHeroBlob().catch(failVideo);
+    stage.classList.add('loading');
+
+    video.preload = 'auto';
+    video.src = current.url;
+    video.load();
+
+    var probed = false;
+    video.addEventListener('loadedmetadata', function onMeta() {
+      video.removeEventListener('loadedmetadata', onMeta);
+      // Prove that seeking actually works before trusting it. A host with no
+      // range support clamps every seek back to zero, and the page would look
+      // frozen with no error to explain why.
+      var probeTo = video.duration * 0.6;
+      var t0 = setTimeout(function () { if (!probed) blobFallback(); }, 6000);
+      video.addEventListener('seeked', function onProbe() {
+        video.removeEventListener('seeked', onProbe);
+        probed = true;
+        clearTimeout(t0);
+        if (Math.abs(video.currentTime - probeTo) > 0.75) blobFallback();
+        else ready();
+      });
+      try { video.currentTime = probeTo; } catch (e) { clearTimeout(t0); blobFallback(); }
+    });
+
+    video.addEventListener('progress', paintRing);
+    video.addEventListener('canplay', paintRing);
+    setTimeout(function () { if (!videoReady) failVideo(); }, 25000);
   }
 
-  async function loadHeroBlob() {
-    stage.classList.add('loading');
-    var ctrl = new AbortController();
-    var watchdog = setTimeout(function () { ctrl.abort(); }, 20000);
+  function paintRing() {
+    if (!video.duration || !video.buffered.length) return;
+    var end = video.buffered.end(video.buffered.length - 1);
+    var frac = Math.min(1, end / video.duration);
+    ring.style.setProperty('--ld', Math.round(126 * (1 - frac)));
+  }
 
-    var res = await fetch(current.url, { signal: ctrl.signal });
-    if (!res.ok) throw new Error('http ' + res.status);
+  function ready() {
+    if (videoReady) return;
+    videoReady = true;
+    canDrive = true;
+    stage.classList.remove('loading');
+    stage.classList.add('video-ready');
+    lastSeek = -1;
+    requestSeek(heroProgress() * video.duration);   // land on where they already are
+    updateBands(heroProgress());
+    onScroll();
+  }
 
-    var total = Number(res.headers.get('Content-Length')) || current.bytes;
-    var reader = res.body.getReader();
-    var chunks = [], got = 0, lastRing = 0;
-
-    for (;;) {
-      var r = await reader.read();
-      if (r.done) break;
-      clearTimeout(watchdog);
-      watchdog = setTimeout(function () { ctrl.abort(); }, 20000);
-      chunks.push(r.value);
-      got += r.value.length;
-      var frac = Math.min(1, got / total);
-      var now = performance.now();
-      if (now - lastRing > 100 || frac === 1) {
-        lastRing = now;
-        ring.style.setProperty('--ld', Math.round(126 * (1 - frac)));
+  /* The old path, kept for hosts that cannot serve byte ranges. */
+  async function blobFallback() {
+    if (videoReady) return;
+    try {
+      var ctrl = new AbortController();
+      var watchdog = setTimeout(function () { ctrl.abort(); }, 25000);
+      var res = await fetch(current.url, { signal: ctrl.signal });
+      if (!res.ok) throw new Error('http ' + res.status);
+      var total = Number(res.headers.get('Content-Length')) || current.bytes;
+      var reader = res.body.getReader();
+      var chunks = [], got = 0, lastRing = 0;
+      for (;;) {
+        var r = await reader.read();
+        if (r.done) break;
+        clearTimeout(watchdog);
+        watchdog = setTimeout(function () { ctrl.abort(); }, 25000);
+        chunks.push(r.value);
+        got += r.value.length;
+        var now = performance.now();
+        if (now - lastRing > 100) {
+          lastRing = now;
+          ring.style.setProperty('--ld', Math.round(126 * (1 - Math.min(1, got / total))));
+        }
       }
+      clearTimeout(watchdog);
+      video.src = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
+      video.load();
+      video.addEventListener('canplay', ready, { once: true });
+    } catch (e) {
+      failVideo();
     }
-    clearTimeout(watchdog);
-    ring.style.setProperty('--ld', 0);
-
-    video.src = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
-    video.load();
-    video.addEventListener('canplay', function () {
-      stage.classList.remove('loading');
-      stage.classList.add('video-ready');
-      requestSeek(heroProgress() * video.duration);
-    }, { once: true });
   }
 
   /* ============ gold dust, built once ============ */
@@ -362,10 +404,10 @@
     if (heroStarted && want.url !== current.url) {
       current = want;
       stage.classList.remove('video-ready', 'video-failed');
-      fetchStarted = false;
+      fetchStarted = false; videoReady = false; canDrive = false;
       lastSeek = -1;
       poster.style.backgroundImage = "url('" + current.poster + "')";
-      startBlobFetch();
+      loadVideo();
     }
     enableScrub();
   }
