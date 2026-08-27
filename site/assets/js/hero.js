@@ -14,7 +14,7 @@
   // Two cuts of the same film: the wide one, and a portrait crop for phones
   // that is a third of the weight because it travels on mobile data.
   var SOURCES = {
-    wide:     { url: 'assets/video/hero-scrub.mp4',          bytes: 7928703,
+    wide:     { url: 'assets/video/hero-scrub.mp4',          bytes: 5055530,
                 poster: 'assets/video/hero-poster.jpg' },
     portrait: { url: 'assets/video/hero-scrub-portrait.mp4', bytes: 2564877,
                 poster: 'assets/video/hero-poster-portrait.jpg' }
@@ -181,6 +181,10 @@
   // frame already showing. Skipping those keeps the decoder off the critical path.
   var HALF_FRAME = 1 / 96;
 
+  // A host that cannot serve byte ranges clamps every seek back to the start.
+  // That can only be judged AFTER a seek completes, never when one is asked for,
+  // because a seek in flight legitimately still reads as zero.
+  var landedShort = 0;
   function requestSeek(t) {
     if (!video.duration || isNaN(t)) return;
     if (Math.abs(t - lastSeek) < HALF_FRAME && t > 0 && t < video.duration) return;
@@ -191,6 +195,11 @@
   }
   video.addEventListener('seeked', function () {
     seekBusy = false;
+    if (videoReady && !usingBlob) {
+      if (lastSeek > 0.4 && video.currentTime < 0.05) {
+        if (++landedShort >= 3) { usingBlob = true; blobFallback(); }
+      } else landedShort = 0;
+    }
     if (pendingTime !== null) { var t = pendingTime; pendingTime = null; requestSeek(t); }
   });
   video.addEventListener('error', function () {
@@ -255,7 +264,7 @@
   }
 
   /* ============ the poster first, then the streamed blob ============ */
-  var heroStarted = false, fetchStarted = false, videoReady = false, canDrive = false;
+  var heroStarted = false, fetchStarted = false, videoReady = false, canDrive = false, usingBlob = false;
 
   function failVideo() {
     stage.classList.remove('loading');
@@ -286,23 +295,12 @@
     video.src = current.url;
     video.load();
 
-    var probed = false;
-    video.addEventListener('loadedmetadata', function onMeta() {
-      video.removeEventListener('loadedmetadata', onMeta);
-      // Prove that seeking actually works before trusting it. A host with no
-      // range support clamps every seek back to zero, and the page would look
-      // frozen with no error to explain why.
-      var probeTo = video.duration * 0.6;
-      var t0 = setTimeout(function () { if (!probed) blobFallback(); }, 6000);
-      video.addEventListener('seeked', function onProbe() {
-        video.removeEventListener('seeked', onProbe);
-        probed = true;
-        clearTimeout(t0);
-        if (Math.abs(video.currentTime - probeTo) > 0.75) blobFallback();
-        else ready();
-      });
-      try { video.currentTime = probeTo; } catch (e) { clearTimeout(t0); blobFallback(); }
-    });
+    // Do not seek to prove seeking works. Doing that on loadedmetadata, before
+    // anything is buffered, forces a cold range request that stalls on a slow
+    // connection and leaves the page looking dead. Start as soon as there is a
+    // frame, and notice a broken host from ordinary use instead (below).
+    video.addEventListener('loadeddata', ready);
+    video.addEventListener('canplay', ready);
 
     video.addEventListener('progress', paintRing);
     video.addEventListener('canplay', paintRing);
@@ -317,7 +315,7 @@
   }
 
   function ready() {
-    if (videoReady) return;
+    if (videoReady || !video.duration) return;
     videoReady = true;
     canDrive = true;
     stage.classList.remove('loading');
@@ -330,8 +328,8 @@
 
   /* The old path, kept for hosts that cannot serve byte ranges. */
   async function blobFallback() {
-    if (videoReady) return;
     try {
+      stage.classList.add('loading');
       var ctrl = new AbortController();
       var watchdog = setTimeout(function () { ctrl.abort(); }, 25000);
       var res = await fetch(current.url, { signal: ctrl.signal });
@@ -355,6 +353,7 @@
       clearTimeout(watchdog);
       video.src = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
       video.load();
+      videoReady = false;
       video.addEventListener('canplay', ready, { once: true });
     } catch (e) {
       failVideo();
