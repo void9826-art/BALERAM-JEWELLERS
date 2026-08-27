@@ -259,7 +259,7 @@
 
   function failVideo() {
     stage.classList.remove('loading');
-    stage.classList.add('video-failed');
+    stage.classList.add('video-failed', 'static-forever');
     canDrive = true;          // the captions still work over the still frame
     updateBands(heroProgress());
   }

@@ -1146,3 +1146,19 @@ body.cursor-on.cur-hot .cur-label{opacity:1}
 
 /* the webp wrapper must not affect layout */
 picture{display:contents}
+
+/* ============================================================
+   WHILE THE FILM IS STILL ARRIVING
+   Show the composed still hero rather than a stage with nothing on it.
+   The page is complete and usable from the first paint: headline, both
+   buttons, the whole site below. When the film is ready it takes over.
+   ============================================================ */
+.stage.loading .static-hero{display:grid}
+.stage.loading .bands{opacity:0 !important;pointer-events:none}
+.stage.loading .chapters{opacity:0}
+.static-hero{transition:opacity .7s var(--ease)}
+.stage.video-ready .static-hero{opacity:0;pointer-events:none}
+
+/* if the film never arrives at all, the still hero is the hero */
+.stage.static-forever .static-hero{display:grid;opacity:1}
+.stage.static-forever .bands,.stage.static-forever .chapters{display:none}
