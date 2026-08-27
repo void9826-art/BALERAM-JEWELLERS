@@ -11,18 +11,26 @@
   var dust    = document.getElementById('dust');
   if (!hero || !stage || !video) return;
 
-  var VIDEO_URL   = 'assets/video/hero-scrub.mp4';
-  var POSTER_URL  = 'assets/video/hero-poster.jpg';
-  var VIDEO_BYTES = 7928703;
+  // Two cuts of the same film: the wide one, and a portrait crop for phones
+  // that is a third of the weight because it travels on mobile data.
+  var SOURCES = {
+    wide:     { url: 'assets/video/hero-scrub.mp4',          bytes: 7928703,
+                poster: 'assets/video/hero-poster.jpg' },
+    portrait: { url: 'assets/video/hero-scrub-portrait.mp4', bytes: 2564877,
+                poster: 'assets/video/hero-poster-portrait.jpg' }
+  };
+  var PORTRAIT_Q = '(orientation: portrait) and (max-width: 900px)';
+  function pickSource() {
+    return matchMedia(PORTRAIT_Q).matches ? SOURCES.portrait : SOURCES.wide;
+  }
+  var current = pickSource();
 
-  /* ============ the five static-hero gates ============
-     These five strings must match site.css character for character. */
+  /* ============ the static-hero gates ============
+     These must match site.css character for character. Phones scrub now, so
+     only two cases fall back: reduced motion, and a sideways phone. */
   var GATES = [
-    '(max-width: 720px)',
-    '(orientation: portrait) and (max-width: 1024px)',
-    '(orientation: portrait) and (pointer: coarse)',
-    '(orientation: landscape) and (pointer: coarse) and (max-height: 560px)',
-    '(prefers-reduced-motion: reduce)'
+    '(prefers-reduced-motion: reduce)',
+    '(orientation: landscape) and (pointer: coarse) and (max-height: 500px)'
   ];
   var MQLS = GATES.map(function (q) { return matchMedia(q); });
 
@@ -90,9 +98,11 @@
   /* ============ the bands ============ */
   var bands = [].map.call(document.querySelectorAll('.band'), function (el) {
     var r = (el.getAttribute('data-range') || '0,1').split(',');
+    var rm = (el.getAttribute('data-range-m') || el.getAttribute('data-range') || '0,1').split(',');
     var a = parseFloat(r[0]), b = parseFloat(r[1]);
+    var am = parseFloat(rm[0]), bm = parseFloat(rm[1]);
     return {
-      el: el, a: a, b: b,
+      el: el, a: a, b: b, am: am, bm: bm,
       first: a <= 0.0001,
       last: b >= 0.9999,
       ramp: parseFloat(el.getAttribute('data-ramp')) || Math.min(0.025, (b - a) * 0.35),
@@ -113,8 +123,9 @@
     var idx = 0, best = -1;
     for (var i = 0; i < bands.length; i++) {
       var B = bands[i];
-      var mid = (B.a + B.b) / 2;
-      var score = 1 - Math.abs(p - mid) / Math.max(0.001, (B.b - B.a));
+      var a = narrow ? B.am : B.a, b = narrow ? B.bm : B.b;
+      var mid = (a + b) / 2;
+      var score = 1 - Math.abs(p - mid) / Math.max(0.001, (b - a));
       if (score > best) { best = score; idx = i; }
     }
     if (idx !== chapOn) {
@@ -131,14 +142,17 @@
 
   var loadK = 0, loadStart = 0;
 
+  var narrow = false;   // set by applyHeroMode; phones get the wider ranges
+
   function updateBands(p) {
     for (var i = 0; i < bands.length; i++) {
       var B = bands[i];
-      var f = Math.min(0.02, (B.b - B.a) / 3);
-      var inRamp  = B.first ? 1 : smoothstep(p, B.a, B.a + f);
-      var outRamp = B.last  ? 1 : (1 - smoothstep(p, B.b - f, B.b));
+      var a = narrow ? B.am : B.a, b = narrow ? B.bm : B.b;
+      var f = Math.min(0.02, (b - a) / 3);
+      var inRamp  = B.first ? 1 : smoothstep(p, a, a + f);
+      var outRamp = B.last  ? 1 : (1 - smoothstep(p, b - f, b));
       var op = inRamp * outRamp;
-      var k = clamp((p - B.a) / B.ramp, 0, 1);
+      var k = clamp((p - a) / B.ramp, 0, 1);
       if (B.first) k = Math.max(k, loadK);
 
       if (Math.abs(op - B.op) > 0.004) {           // delta gate the opacity
@@ -251,13 +265,13 @@
     if (heroStarted) return;
     heroStarted = true;
 
-    poster.style.backgroundImage = "url('" + POSTER_URL + "')";
+    poster.style.backgroundImage = "url('" + current.poster + "')";
     loadStart = performance.now();
 
     var img = new Image();
     img.onload = startBlobFetch;
     img.onerror = startBlobFetch;
-    img.src = POSTER_URL;
+    img.src = current.poster;
     setTimeout(startBlobFetch, 4000);
   }
 
@@ -272,10 +286,10 @@
     var ctrl = new AbortController();
     var watchdog = setTimeout(function () { ctrl.abort(); }, 20000);
 
-    var res = await fetch(VIDEO_URL, { signal: ctrl.signal });
+    var res = await fetch(current.url, { signal: ctrl.signal });
     if (!res.ok) throw new Error('http ' + res.status);
 
-    var total = Number(res.headers.get('Content-Length')) || VIDEO_BYTES;
+    var total = Number(res.headers.get('Content-Length')) || current.bytes;
     var reader = res.body.getReader();
     var chunks = [], got = 0, lastRing = 0;
 
@@ -340,9 +354,22 @@
 
   function applyHeroMode() {
     var staticMode = MQLS.some(function (m) { return m.matches; });
-    if (staticMode) disableScrub();
-    else enableScrub();
+    if (staticMode) { disableScrub(); return; }
+
+    // rotating a phone changes which cut of the film belongs on screen
+    narrow = matchMedia(PORTRAIT_Q).matches;
+    var want = pickSource();
+    if (heroStarted && want.url !== current.url) {
+      current = want;
+      stage.classList.remove('video-ready', 'video-failed');
+      fetchStarted = false;
+      lastSeek = -1;
+      poster.style.backgroundImage = "url('" + current.poster + "')";
+      startBlobFetch();
+    }
+    enableScrub();
   }
+  matchMedia(PORTRAIT_Q).addEventListener('change', applyHeroMode);
 
   MQLS.forEach(function (m) { m.addEventListener('change', applyHeroMode); });
   applyHeroMode();

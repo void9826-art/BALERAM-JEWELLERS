@@ -473,19 +473,59 @@ section{position:relative}
 /* ============================================================
    STATIC HERO GATES : these five must match hero.js exactly
    ============================================================ */
-@media (max-width:720px),
-       (orientation:portrait) and (max-width:1024px),
-       (orientation:portrait) and (pointer:coarse),
-       (orientation:landscape) and (pointer:coarse) and (max-height:560px),
-       (prefers-reduced-motion:reduce){
+/* ============================================================
+   STATIC HERO GATES: these must match hero.js exactly.
+   Phones scrub now, using their own portrait cut of the film.
+   The static hero is kept for the two cases with no good answer:
+   reduced motion, and a phone held sideways with no height to work in.
+   ============================================================ */
+@media (prefers-reduced-motion:reduce),
+       (orientation:landscape) and (pointer:coarse) and (max-height:500px){
   .hero{height:auto}
   .stage{position:relative;height:100svh;min-height:520px}
-  .bands,.ring,.cue,.dust{display:none !important}
+  .bands,.ring,.cue,.dust,.chapters{display:none !important}
   .static-hero{display:grid}
   #hero-video{display:none}
-  /* A landscape storefront crops to a sliver on a phone, so the portrait
-     hero is its own composed image rather than a crop of the desktop one. */
-  .poster{opacity:1 !important;background-image:url('../img/hero-mobile.jpg');background-image:-webkit-image-set(url('../img/hero-mobile.webp') type('image/webp'),url('../img/hero-mobile.jpg') type('image/jpeg'));background-image:image-set(url('../img/hero-mobile.webp') type('image/webp'),url('../img/hero-mobile.jpg') type('image/jpeg'));background-position:center 18%}
+  .poster{opacity:1 !important;background-image:url('../img/hero-mobile.jpg');background-position:center 18%}
+  .poster{background-image:-webkit-image-set(url('../img/hero-mobile.webp') type('image/webp'),url('../img/hero-mobile.jpg') type('image/jpeg'));background-image:image-set(url('../img/hero-mobile.webp') type('image/webp'),url('../img/hero-mobile.jpg') type('image/jpeg'))}
+}
+
+/* ============================================================
+   PORTRAIT PHONES: the scroll journey, reshaped for a tall screen
+   ============================================================ */
+@media (orientation:portrait) and (max-width:900px){
+  /* a thumb swipe covers far more ground than a wheel notch, so the journey
+     needs the same length here as on a laptop for each beat to be readable */
+  .hero{height:1000vh}
+  .stage{height:100svh}
+
+  /* the portrait cut already frames the action, so the poster matches it */
+  .poster{background-image:url('../video/hero-poster-portrait.jpg');
+    background-image:-webkit-image-set(url('../video/hero-poster-portrait.webp') type('image/webp'),url('../video/hero-poster-portrait.jpg') type('image/jpeg'));
+    background-image:image-set(url('../video/hero-poster-portrait.webp') type('image/webp'),url('../video/hero-poster-portrait.jpg') type('image/jpeg'));
+    background-position:center}
+
+  /* left and right columns make no sense at 375px: every beat centres and
+     sits low, clear of the action, with the scrim following it down */
+  .band-2,.band-3,.band-4,.band-5{
+    place-items:end center;align-content:end;text-align:center;
+    padding:0 22px 13vh}
+  .band-3::before,.band-4::before,.band-2::before,.band-5::before{
+    inset:26% -6% -8% -6%;
+    background:radial-gradient(ellipse 104% 70% at 50% 76%,
+      rgba(4,10,7,.95) 0%,rgba(4,10,7,.86) 40%,rgba(4,10,7,.52) 64%,rgba(4,10,7,0) 90%)}
+  .band-4 .b-body{margin-inline:auto}
+  .b-head{font-size:clamp(1.9rem,8.4vw,2.6rem);max-width:16ch;margin-inline:auto}
+  .b-body{font-size:15px;max-width:32ch;margin-inline:auto}
+  .b-cta{justify-content:center}
+  .band-1{padding-bottom:12vh}
+  .wm-sub{font-size:clamp(1.2rem,6.6vw,1.9rem)}
+
+  /* chapter dots move off the edge and lie along the bottom */
+  .chapters{right:auto;left:50%;top:auto;bottom:16px;transform:translateX(-50%);
+    grid-auto-flow:column;gap:9px}
+  .chapters b{width:5px;height:5px}
+  .cue{bottom:34px}
 }
 
 /* short desktop windows: keep the scrub, drop the overlays with no room */

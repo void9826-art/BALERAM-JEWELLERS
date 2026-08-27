@@ -101,6 +101,14 @@ extra frames were built by motion interpolation, and the picture was denoised, u
 sharpened in one pass. It weighs 7.9 MB and streams in behind a loading ring, and phones
 never download it at all.
 
+**Phones get their own cut.** The wide film crops to a sliver on a tall screen, so
+there is a second encode, `hero-scrub-portrait.mp4`, cropped to 9:16 and weighing
+2.45 MB instead of 7.56 MB, because it travels on mobile data. The page picks
+whichever fits the screen and swaps if the phone is rotated.
+
+Two cases still get a still image instead of the scrolling film: reduced motion, and
+a phone held sideways, where there is no height to work in.
+
 If a real walkthrough of the shop is ever filmed, it drops straight in. Re-encode it with
 the same settings, replace `site/assets/video/hero-scrub.mp4`, and update `VIDEO_BYTES` near
 the top of `site/assets/js/hero.js` to the new file size in bytes. Nothing else changes.
