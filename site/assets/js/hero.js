@@ -222,15 +222,14 @@
 
   /* Scroll fast and the camera softens and surges, the way a real one does.
      It settles back to sharp the moment you stop. */
-  var velOK = matchMedia('(pointer: fine)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var lastBlur = -1;
+  var velOK = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var lastScale = -1;
   function updateVelocity(v) {
     if (!velOK) return;
-    var blur = Math.min(2.6, v * 62);
-    if (Math.abs(blur - lastBlur) < 0.12) return;
-    lastBlur = blur;
-    video.style.setProperty('--vblur', blur.toFixed(2) + 'px');
-    video.style.setProperty('--vscale', (1 + Math.min(0.014, v * 0.34)).toFixed(4));
+    var s = 1 + Math.min(0.014, v * 0.34);
+    if (Math.abs(s - lastScale) < 0.0015) return;   // only write when it moves
+    lastScale = s;
+    video.style.setProperty('--vscale', s.toFixed(4));
   }
 
   function onScroll() {

@@ -748,10 +748,14 @@ body.cursor-on.cur-hot .cur-label{opacity:1}
 /* ============================================================
    SCROLL VELOCITY: the camera surges and softens when you move fast
    ============================================================ */
-#hero-video{filter:blur(var(--vblur,0px));transform:translateZ(0) scale(var(--vscale,1));
-  transition:filter .28s var(--ease),transform .28s var(--ease)}
+/* Velocity used to soften the picture with a blur as well. It looked good and
+   cost far too much: a filter on a full screen video makes the compositor
+   redraw the whole surface every frame, and 40 percent of frames were missing
+   60fps because of it. The surge is a transform, which is nearly free. */
+#hero-video{transform:translateZ(0) scale(var(--vscale,1));
+  transition:transform .28s var(--ease)}
 @media (pointer:coarse),(prefers-reduced-motion:reduce){
-  #hero-video{filter:none !important;transform:translateZ(0) !important}
+  #hero-video{transform:translateZ(0) !important}
 }
 
 /* ============================================================
