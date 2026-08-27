@@ -1,0 +1,19 @@
+# Working files. None of this belongs in the repo or on the live site.
+
+# raw video, extracted frames, contrast-audit screenshots, downloaded fonts
+review/
+
+# the original low-resolution shop photos, kept locally as reference
+plates-source/
+plates-cleaned/
+
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+__MACOSX/
+
+# never commit a font you have not licensed for this use
+*.otf
+*.ttf
+*.zip
