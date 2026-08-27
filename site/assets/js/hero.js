@@ -14,7 +14,7 @@
   // Two cuts of the same film: the wide one, and a portrait crop for phones
   // that is a third of the weight because it travels on mobile data.
   var SOURCES = {
-    wide:     { url: 'assets/video/hero-scrub.mp4',          bytes: 5055530,
+    wide:     { url: 'assets/video/hero-scrub.mp4',          bytes: 3991985,
                 poster: 'assets/video/hero-poster.jpg' },
     portrait: { url: 'assets/video/hero-scrub-portrait.mp4', bytes: 2564877,
                 poster: 'assets/video/hero-poster-portrait.jpg' }
@@ -181,10 +181,6 @@
   // frame already showing. Skipping those keeps the decoder off the critical path.
   var HALF_FRAME = 1 / 96;
 
-  // A host that cannot serve byte ranges clamps every seek back to the start.
-  // That can only be judged AFTER a seek completes, never when one is asked for,
-  // because a seek in flight legitimately still reads as zero.
-  var landedShort = 0;
   function requestSeek(t) {
     if (!video.duration || isNaN(t)) return;
     if (Math.abs(t - lastSeek) < HALF_FRAME && t > 0 && t < video.duration) return;
@@ -195,11 +191,6 @@
   }
   video.addEventListener('seeked', function () {
     seekBusy = false;
-    if (videoReady && !usingBlob) {
-      if (lastSeek > 0.4 && video.currentTime < 0.05) {
-        if (++landedShort >= 3) { usingBlob = true; blobFallback(); }
-      } else landedShort = 0;
-    }
     if (pendingTime !== null) { var t = pendingTime; pendingTime = null; requestSeek(t); }
   });
   video.addEventListener('error', function () {
@@ -264,7 +255,7 @@
   }
 
   /* ============ the poster first, then the streamed blob ============ */
-  var heroStarted = false, fetchStarted = false, videoReady = false, canDrive = false, usingBlob = false;
+  var heroStarted = false, fetchStarted = false, videoReady = false, canDrive = false;
 
   function failVideo() {
     stage.classList.remove('loading');
@@ -276,42 +267,56 @@
   function initHeroOnce() {
     if (heroStarted) return;
     heroStarted = true;
-
     poster.style.backgroundImage = "url('" + current.poster + "')";
     loadStart = performance.now();
     loadVideo();
   }
 
-  /* Stream the file and seek into it with range requests, rather than waiting
-     for the whole thing. The wide cut is nearly 8 MB: downloading all of it
-     before the first scroll meant ten seconds of a dead page on a real
-     connection. Hosts without range support fall back to the blob below. */
+  /* Fetch the whole file, then scrub a local copy.
+     Streaming and seeking with range requests was tried and does not work: a
+     paused video buffers a second or two and then suspends, and a seek past
+     what it holds never completes, so the film sticks. Holding the file makes
+     every seek instant and every host behave the same. The cost is the wait,
+     and the wait is paid for by keeping the file small, showing real progress,
+     and holding the opening caption so the words always match the frame. */
   function loadVideo() {
     if (fetchStarted) return;
     fetchStarted = true;
     stage.classList.add('loading');
-
-    video.preload = 'auto';
-    video.src = current.url;
-    video.load();
-
-    // Do not seek to prove seeking works. Doing that on loadedmetadata, before
-    // anything is buffered, forces a cold range request that stalls on a slow
-    // connection and leaves the page looking dead. Start as soon as there is a
-    // frame, and notice a broken host from ordinary use instead (below).
-    video.addEventListener('loadeddata', ready);
-    video.addEventListener('canplay', ready);
-
-    video.addEventListener('progress', paintRing);
-    video.addEventListener('canplay', paintRing);
-    setTimeout(function () { if (!videoReady) failVideo(); }, 25000);
+    fetchBlob().catch(failVideo);
   }
 
-  function paintRing() {
-    if (!video.duration || !video.buffered.length) return;
-    var end = video.buffered.end(video.buffered.length - 1);
-    var frac = Math.min(1, end / video.duration);
-    ring.style.setProperty('--ld', Math.round(126 * (1 - frac)));
+  async function fetchBlob() {
+    var ctrl = new AbortController();
+    var watchdog = setTimeout(function () { ctrl.abort(); }, 30000);
+
+    var res = await fetch(current.url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error('http ' + res.status);
+
+    var total = Number(res.headers.get('Content-Length')) || current.bytes;
+    var reader = res.body.getReader();
+    var chunks = [], got = 0, lastPaint = 0;
+
+    for (;;) {
+      var r = await reader.read();
+      if (r.done) break;
+      clearTimeout(watchdog);
+      watchdog = setTimeout(function () { ctrl.abort(); }, 30000);
+      chunks.push(r.value);
+      got += r.value.length;
+      var now = performance.now();
+      if (now - lastPaint > 90) {
+        lastPaint = now;
+        ring.style.setProperty('--ld', Math.round(126 * (1 - Math.min(1, got / total))));
+      }
+    }
+    clearTimeout(watchdog);
+    ring.style.setProperty('--ld', 0);
+
+    video.src = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
+    video.load();
+    video.addEventListener('canplay', ready, { once: true });
+    video.addEventListener('loadeddata', ready, { once: true });
   }
 
   function ready() {
@@ -321,43 +326,9 @@
     stage.classList.remove('loading');
     stage.classList.add('video-ready');
     lastSeek = -1;
-    requestSeek(heroProgress() * video.duration);   // land on where they already are
+    requestSeek(heroProgress() * video.duration);   // land where they already are
     updateBands(heroProgress());
     onScroll();
-  }
-
-  /* The old path, kept for hosts that cannot serve byte ranges. */
-  async function blobFallback() {
-    try {
-      stage.classList.add('loading');
-      var ctrl = new AbortController();
-      var watchdog = setTimeout(function () { ctrl.abort(); }, 25000);
-      var res = await fetch(current.url, { signal: ctrl.signal });
-      if (!res.ok) throw new Error('http ' + res.status);
-      var total = Number(res.headers.get('Content-Length')) || current.bytes;
-      var reader = res.body.getReader();
-      var chunks = [], got = 0, lastRing = 0;
-      for (;;) {
-        var r = await reader.read();
-        if (r.done) break;
-        clearTimeout(watchdog);
-        watchdog = setTimeout(function () { ctrl.abort(); }, 25000);
-        chunks.push(r.value);
-        got += r.value.length;
-        var now = performance.now();
-        if (now - lastRing > 100) {
-          lastRing = now;
-          ring.style.setProperty('--ld', Math.round(126 * (1 - Math.min(1, got / total))));
-        }
-      }
-      clearTimeout(watchdog);
-      video.src = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
-      video.load();
-      videoReady = false;
-      video.addEventListener('canplay', ready, { once: true });
-    } catch (e) {
-      failVideo();
-    }
   }
 
   /* ============ gold dust, built once ============ */
